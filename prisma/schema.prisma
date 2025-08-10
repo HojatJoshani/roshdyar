@@ -1,0 +1,345 @@
+// ============================================================
+// Roshdyar — Prisma schema
+// All money is stored as INTEGER smallest currency unit (Toman * 100 = Rial? )
+// We use TOMAN as the user-facing currency. Internally we store
+// amounts in TOMAN as integer (no floating point). Provider costs
+// are also stored in TOMAN integer. This keeps the ledger exact.
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------- Users -----------------------
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  phone         String?  @unique
+  name          String?
+  passwordHash  String
+  role          String   @default("CUSTOMER") // CUSTOMER | ADMIN
+  banned        Boolean  @default(false) // admin can ban a user (blocks login + ordering)
+  lastSeenNotificationsAt DateTime? @map("last_seen_notifications_at")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  wallet            Wallet?
+  walletTxDebit     WalletTransaction[] @relation("DebitUser")
+  walletTxCredit    WalletTransaction[] @relation("CreditUser")
+  orders            Order[]
+  orderEvents       OrderEvent[]
+  payments          Payment[]
+  supportTickets    SupportTicket[]
+  supportReplies    SupportTicketReply[]
+  promoRedemptions  PromoRedemption[]
+  reviews           ServiceReview[]
+}
+
+// ----------------------- Wallet -----------------------
+// One wallet per user. Balance stored in TOMAN integer.
+model Wallet {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance   Int      @default(0) // TOMAN integer
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Immutable ledger entry. Direction: CREDIT (adds to wallet) or DEBIT (subtracts).
+model WalletTransaction {
+  id          String   @id @default(cuid())
+  walletId    String
+  userId      String
+  user          User     @relation("DebitUser", fields: [userId], references: [id])
+  creditedTo    User?    @relation("CreditUser", fields: [creditedToId], references: [id])
+  creditedToId  String? @map("credited_to_id")
+
+  direction   String   // CREDIT | DEBIT
+  amount      Int      // TOMAN integer, always positive
+  balanceAfter Int     // snapshot of balance right after this tx applied
+  type        String   // DEPOSIT | ORDER_PAYMENT | REFUND | ADMIN_ADJUST
+  description String
+  reference   String?  // payment id / order id / ticket id
+
+  // Reverse relations (FKs live on Order/Payment side, not here)
+  order       Order?   @relation
+  payment     Payment? @relation
+
+  createdAt   DateTime @default(now())
+
+  @@map("wallet_transactions")
+
+  @@index([walletId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// ----------------------- Services -----------------------
+// A curated local service (e.g. "Instagram Followers"). Admin-curated,
+// never auto-imported from a provider. Has 3 tiers mapped to provider
+// service IDs.
+model Service {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String   // Persian display name e.g. "فالوور اینستاگرام"
+  platform    String   // INSTAGRAM | YOUTUBE
+  category    String   // FOLLOWERS | LIKES | VIEWS | SUBSCRIBERS
+  summary     String   // one-line description
+  description String   // long-form Persian description
+  suitableFor String   // comma-separated use cases
+  emoji       String   // icon emoji
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tiers       ServiceTier[]
+  reviews     ServiceReview[]
+}
+
+// Each tier (Economy / Standard / Premium) maps to a provider service.
+// Provider details (providerServiceId, cost) live here, server-side only.
+// Never returned to the customer-facing API.
+model ServiceTier {
+  id               String  @id @default(cuid())
+  serviceId        String
+  service          Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  tier             String  // ECONOMY | STANDARD | PREMIUM
+  // Customer-facing
+  displayName      String  // e.g. "اقتصادی", "استاندارد", "حرفه‌ای"
+  tagline          String  // short marketing line for the tier
+  featuresCsv      String  // comma-separated short features shown to customer
+  // Pricing (server-side only). pricePer1000 in TOMAN integer.
+  pricePer1000     Int
+  minQuantity      Int     @default(100)
+  maxQuantity      Int     @default(100000)
+  step            Int     @default(100)
+  // Estimated delivery shown to customer (e.g. "۱ تا ۳ ساعت")
+  deliveryEstimate String
+  refillPolicy     String  // e.g. "۳۰ روز گارانتی ری‌فیل"
+  refundPolicy     String  // e.g. "بازگشت وجه در صورت عدم تحویل"
+
+  // Provider mapping (server-side only, never sent to client)
+  providerKey         String  @default("mock") // adapter key
+  providerServiceId   String  // provider's service id
+  providerCostPer1000 Int     @default(0) // TOMAN integer cost from provider
+
+  isActive          Boolean @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([serviceId, tier])
+}
+
+// ----------------------- Orders -----------------------
+// Order snapshots the service & tier at purchase time so later
+// admin edits never change historical orders.
+model Order {
+  id            String   @id @default(cuid())
+  code          String   @unique // human-friendly e.g. RG-7K2X9F
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+
+  // Snapshot of service at purchase time
+  serviceName   String
+  serviceSlug   String
+  platform      String
+  category      String
+  tier          String
+  tierDisplay   String
+  emoji         String
+
+  // Pricing snapshot (TOMAN integer)
+  quantity      Int
+  unitPricePer1000 Int
+  totalAmount   Int
+  discountAmount Int     @default(0) // TOMAN integer; 0 if no promo applied
+  promoCode    String?  // snapshot of the code applied (for display)
+
+  // Order details
+  targetLink    String
+  notes         String?
+
+  status        String   @default("PENDING")
+  // PENDING → PAYMENT_CONFIRMED → PROCESSING → IN_PROGRESS → COMPLETED | PARTIAL | FAILED
+  providerOrderId String?
+  providerMeta  String?  // JSON string of provider response (server-side only)
+  startedCount  Int      @default(0)
+  remainsCount  Int      @default(0)
+  completedCount Int     @default(0)
+
+  walletTxId    String? @unique
+  acceptedTerms Boolean @default(false)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  events        OrderEvent[]
+  walletTx      WalletTransaction? @relation(fields: [walletTxId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model OrderEvent {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  status    String   // the new status
+  message   String   // human-readable Persian message
+  meta      String?  // JSON string of provider raw response (server-side only)
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
+}
+
+// ----------------------- Payments -----------------------
+// Tracks ZarinPal (or mock) payment attempts for wallet top-ups.
+model Payment {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  amount       Int      // TOMAN integer
+  gateway      String   @default("zarinpal")
+  status       String   @default("PENDING") // PENDING | PAID | FAILED | CANCELED
+  authority    String?  // ZarinPal authority
+  refId        String?  // ZarinPal reference id (tracking code)
+  gatewayMeta  String?  // JSON of gateway response
+  walletTxId   String?  @unique // linked WalletTransaction once settled
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  walletTx     WalletTransaction? @relation(fields: [walletTxId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ----------------------- Support -----------------------
+model SupportTicket {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  subject   String
+  category  String   @default("general") // general | order | payment | other
+  orderId   String?
+  status    String   @default("OPEN") // OPEN | ANSWERED | CLOSED
+  priority  String   @default("NORMAL")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  replies   SupportTicketReply[]
+}
+
+model SupportTicketReply {
+  id        String   @id @default(cuid())
+  ticketId  String
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  message   String
+  isStaff   Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([ticketId])
+}
+
+// ----------------------- Promo Codes -----------------------
+// Simple discount engine. Admin-curated codes. Types:
+//   PERCENT — percentage off (e.g. 10 = 10% off)
+//   FIXED   — fixed Toman discount (e.g. 5000 = 5000 Toman off)
+// Constraints: maxUses (total), perUserLimit, minOrderAmount, expiresAt.
+// appliesTo: "ALL" | "INSTAGRAM" | "YOUTUBE" | a service slug.
+model PromoCode {
+  id              String    @id @default(cuid())
+  code            String    @unique
+  description      String?
+  type            String    // PERCENT | FIXED
+  value           Int       // percent (1-100) or Toman integer
+  appliesTo       String    @default("ALL") // ALL | platform | serviceSlug
+  maxUses         Int       @default(0) // 0 = unlimited
+  usedCount       Int       @default(0)
+  perUserLimit    Int       @default(1) // 0 = unlimited per user
+  minOrderAmount  Int       @default(0) // TOMAN integer; 0 = no min
+  expiresAt       DateTime?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  redemptions     PromoRedemption[]
+}
+
+// Tracks which user redeemed which code, for per-user limit + auditing.
+model PromoRedemption {
+  id          String   @id @default(cuid())
+  promoCodeId String
+  promoCode   PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  orderId     String?  // null until the redemption is locked to an order
+  discountAmount Int   // snapshot of the actual discount applied
+  createdAt   DateTime @default(now())
+
+  @@unique([promoCodeId, userId, orderId]) // prevent double-counting per order
+  @@index([promoCodeId])
+  @@index([userId])
+}
+
+// ----------------------- Service Reviews -----------------------
+// HONEST social proof — only users who have a COMPLETED order for a given
+// service slug can leave one review per service. Rating 1–5 stars + optional
+// comment. Admin can hide inappropriate reviews (isHidden).
+model ServiceReview {
+  id          String   @id @default(cuid())
+  serviceId   String
+  service     Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orderId     String   @unique // one review per order (locks to a real completed order)
+  rating      Int      // 1–5
+  comment     String?  // optional, max 500 chars
+  isHidden    Boolean  @default(false) // admin moderation
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([serviceId, userId]) // one review per user per service
+  @@index([serviceId])
+  @@index([userId])
+}
+
+// ----------------------- Settings (key-value) -----------------------
+// Site-wide configuration. Admin-editable via /admin/settings.
+// Keys are dotted strings e.g. "site.maintenanceMode", "site.defaultWalletCredit".
+model Setting {
+  key       String   @id
+  value     String   // stored as string, parsed by the consumer
+  updatedAt DateTime @updatedAt
+}
+
+// ----------------------- Audit Log -----------------------
+// Records admin actions for compliance. Currently used for impersonation
+// events (start/end), but extensible to other admin actions.
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String   // IMPERSONATE_START | IMPERSONATE_END | ...
+  adminId   String
+  adminEmail String
+  targetUserId String?
+  targetUserEmail String?
+  metadata  String?  // JSON string of extra context
+  createdAt DateTime @default(now())
+
+  @@index([adminId])
+  @@index([action])
+  @@index([createdAt])
+}

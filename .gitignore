@@ -1,0 +1,7 @@
+node_modules/
+.next/
+db/
+*.log
+.env.local
+mock-provider-state.json
+agent-ctx/
