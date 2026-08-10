@@ -1,0 +1,319 @@
+     1→     1→# رشدگر (Roshdgar) — Project Worklog
+     2→     2→
+     3→     3→## Project Status (as of initial setup)
+     4→     4→- **Foundation complete**: Next.js 16 + TypeScript + Tailwind 4 + Prisma (SQLite)
+     5→     5→- **Design system**: Vazirmatn font (RTL), emerald brand palette, dark mode tokens, custom utilities (mesh bg, glass, shimmer, shine)
+     6→     6→- **DB schema**: User, Wallet, WalletTransaction, Service, ServiceTier, Order, OrderEvent, Payment, SupportTicket, SupportTicketReply — all money as INT TOMAN
+     7→     7→- **Auth**: NextAuth credentials provider with role (CUSTOMER/ADMIN), JWT sessions
+     8→     8→- **Wallet ledger**: Atomic debit/credit with balanceAfter snapshot, idempotent order payment
+     9→     9→- **Provider adapter**: Mock provider with realistic lifecycle (pending → in_progress → completed/partial/failed), persisted to mock-provider-state.json
+    10→    10→- **APIs**: /api/services, /api/services/[slug], /api/wallet/balance, /api/wallet/transactions, /api/wallet/deposit, /api/wallet/callback, /api/orders (GET+POST), /api/orders/[id], /api/auth/register, /api/support (GET+POST), /api/support/[id]
+    11→    11→- **Seeded data**: admin@roshdgar.local (admin12345), user@roshdgar.local (user12345), 4 services × 3 tiers each = 12 curated SKUs
+    12→    12→
+    13→    13→## What's NEXT (in progress)
+    14→    14→- Home page (hero + value props + featured services + trust)
+    15→    15→- Service catalog pages (Instagram / YouTube)
+    16→    16→- Service detail page (overview + terms + tier picker)
+    17→    17→- Order flow + confirmation step
+    18→    18→- My Orders list + Order detail/tracking (visual timeline)
+    19→    19→- Wallet page (banking-app feel) + deposit flow + callback
+    20→    20→- Support tickets (list + new + thread)
+    21→    21→- Login / Register (RTL forms)
+    22→    22→- Admin panel (minimal but functional)
+    23→    23→- Background worker mini-service (port 3003) that polls PENDING→PAYMENT_CONFIRMED orders and forwards to mock provider, then polls status and writes OrderEvents
+    24→    24→- Agent-browser self-verification + fixes
+    25→    25→- Create 15-min cron webDevReview
+    26→    26→
+    27→    27→## Credentials (dev only)
+    28→    28→- Admin: admin@roshdgar.local / admin12345
+    29→    29→- User:  user@roshdgar.local / user12345
+    30→    30→
+    31→    31→---
+    32→    32→
+    33→    33→## Task ID: 6 — Agent: Code (Services & Detail Pages)
+    34→    34→
+    35→    35→### Task
+    36→    36→Build 3 service pages: `/services/instagram` (catalog), `/services/youtube` (catalog), and `/services/[slug]` (premium e-commerce-style detail page with sticky order config card). Plus the client-side `OrderConfigCard` component.
+    37→    37→
+    38→    38→### Work Log
+    39→    39→1. **Created `src/components/brand/service-breadcrumb.tsx`** — RTL-aware breadcrumb using `ChevronLeft` separators (correct direction for Persian reading flow). Items support optional `href`; last item is rendered as plain bold text (current page).
+    40→    40→2. **Created `src/components/brand/service-catalog.tsx`** (`'use client'`) — Catalog grid with client-side category filter chips. Derives available categories from the actual services passed in (so YouTube page only shows "همه" + "بازدید" when only VIEWS service exists). Active chip uses `bg-primary text-primary-foreground shadow-soft`; inactive uses subtle hover. Each chip shows a count badge in Persian digits. Empty state with `PackageOpen` icon and friendly Persian message.
+    41→    41→3. **Created `src/components/brand/order-config-card.tsx`** (`'use client'`) — Sticky order configuration card:
+    42→    42→   - **Tier selector**: 3 selectable cards (Economy / Standard ⭐ Recommended / Premium). Each shows `TierBadge`, displayName, tagline, price/1000 in Persian digits + Toman unit, delivery estimate, and a checkmark when selected. Selected state: `border-primary bg-primary/5 shadow-soft`. Uses Framer Motion `motion.button` with `whileTap={{ scale: 0.985 }}` and `transition={{ duration: 0.2, ease: 'easeOut' }}` + CSS `transition-[border-color,background-color,box-shadow] duration-200 ease-out` for the 200ms color micro-interaction.
+    43→    43→   - **Quantity input**: − / + stepper buttons (disabled at min/max), centered numeric Input with Persian digit display (`toFaDigits` of `toLocaleString('en-US')`), accepts both Latin and Persian digit input via `toEnDigits` parsing. Below it a `Slider` (shadcn) bound to the same state, with min/max/step from the selected tier. Min/max hints displayed. Inline validation warning if out of range.
+    44→    44→   - **Link input**: with `Link2` icon, `dir="ltr"`, platform-aware placeholder (`https://instagram.com/p/xxxxx` for IG, `https://youtube.com/watch?v=xxxxx` for YT). Validates with `/^https?:\/\/.+\..+/` regex.
+    45→    45→   - **Pricing summary card**: shows price per 1000 + computed total (live). Total uses `Math.ceil(pricePer1000 * quantity / 1000)` for integer Toman accuracy.
+    46→    46→   - **Submit button**: "محاسبه قیمت و ادامه" with `ShieldCheck` icon. Disabled if quantity out of range OR link invalid. On click, `router.push('/order?serviceTierId=...&quantity=...&link=...')` — actual order page built by another agent.
+    47→    47→   - **Small print**: "با کلیک بر ادامه، قوانین سرویس را می‌پذیرید."
+    48→    48→   - On tier change, quantity is clamped to the new tier's `inQuantity, maxQuantity]` range.
+    49→    49→4. **Created `src/app/services/instagram/page.tsx`** (Server Component, `dynamic = 'force-dynamic'`) — Fetches INSTAGRAM services via Prisma, strips provider-only fields (`providerKey`, `providerServiceId`, `providerCostPer1000` are never selected in the map). Hero strip with `bg-mesh-brand` + `bg-grid` overlay, breadcrumb (خانه / خدمات / اینستاگرام), platform chip with Instagram-colored Instagram icon, service count chip, "شروع از" cheapest price chip, h1 "خدمات رشد اینستاگرام", trust chips row. Renders `<ServiceCatalog services={services} />`. Has its own empty state if no services.
+    50→    50→5. **Created `src/app/services/youtube/page.tsx`** (Server Component) — Same structure as Instagram but for YOUTUBE platform. Uses `Youtube` icon (red). Hero text tailored to YouTube (ریتنشن، تقویت رتبه ویدیو). Same SiteShell wrapper.
+    51→    51→6. **Created `src/app/services/[slug]/page.tsx`** (Server Component) — Premium e-commerce product page:
+    52→    52→   - **Data**: `db.service.findUnique({ where: { slug }, include: { tiers: { where: { isActive: true } } } })`, returns null → `notFound()` if missing/inactive. Provider fields stripped in map.
+    53→    53→   - **Layout**: `lg:grid-cols-[1fr_400px]` 2-column grid. Left col 60%, right col 40% sticky (`lg:sticky lg:top-20 lg:self-start`).
+    54→    54→   - **Service header**: large emoji in `bg-accent` rounded square, platform tag with colored dot, category chip, h1 with service name, summary, full `TierBadge` row.
+    55→    55→   - **Tabs** (shadcn `Tabs`): 3 tabs —
+    56→    56→     1. **نمای کلی** (Overview): full description, "مناسب برای" pill chips parsed from `suitableFor` CSV, 4-card quick facts grid (حداقل سفارش / حداکثر سفارش / زمان تحویل / شروع قیمت هر ۱۰۰۰) using the Standard tier as reference, with a note.
+    57→    57→     2. **شرایط و قوانین** (Terms): For EACH tier, a bordered card with tier badge + displayName + price/1000, then two sub-cards for refill policy and refund policy, then a checkmark list of features. At the bottom: bordered "تأیید قوانین سرویس" callout with `ShieldAlert` icon and full Persian acceptance text.
+    58→    58→     3. **سؤالات رایج** (FAQ): `Accordion` with 4–5 hand-written Persian Q&A items dynamically selected by `getServiceFaqs(category, platform)` — separate content for IG Followers, IG Likes, IG Views, YT Views, plus a generic fallback.
+    59→    59→   - **Right column**: `<OrderConfigCard>` rendered server-side as a client component island.
+    60→    60→   - **Mobile**: A small CTA link `lg:hidden` that scrolls down to `#order` anchor to nudge users to the order card below the tabs.
+    61→    61→   - **Helper FactCard sub-component** in the same file for the 4 quick facts.
+    62→    62→   - **Breadcrumb**: 4 items (خانه / خدمات / {platformLabel} / {serviceName}).
+    63→    63→   - All amounts use `formatToman` + `formatQuantity`; all counts use `toFaDigits`.
+    64→    64→
+    65→    65→### Errors Fixed
+    66→    66→- **Initial compile error**: imported `MinCircle` from `lucide-react` — does not exist (should be `MinusCircle`). Fixed by renaming the import and the JSX usage. (Caught by dev log + curl 500.)
+    67→    67→- **Removed unused `toFaDigits` import** from the slug page (caught during self-review before lint).
+    68→    68→
+    69→    69→### Verification
+    70→    70→- `curl -s -o /dev/null -w "%{http_code}"` results:
+    71→    71→  - `/services/instagram` → **200**
+    72→    72→  - `/services/youtube` → **200**
+    73→    73→  - `/services/instagram-followers` → **200**
+    74→    74→  - `/services/instagram-likes` → **200**
+    75→    75→  - `/services/youtube-views` → **200**
+    76→    76→  - `/services/nonexistent-slug` → **404** (correctly triggers `notFound()`)
+    77→    77→- `bun run lint` → clean, exit 0.
+    78→    78→- Dev log final state shows all routes returning 200 with no runtime errors.
+    79→    79→- Verified via curl HTML inspection: order card renders "سفارش این خدمت", "قیمت هر ۱٬۰۰۰", "مبلغ کل", "محاسبه قیمت و ادامه", "با کلیک بر ادامه، قوانین سرویس را می‌پذیرید."; tabs render "نمای کلی", "شرایط و قوانین", "سؤالات رایج"; terms section has "تأیید قوانین سرویس", "سیاست ری‌فیل", "سیاست بازگشت وجه".
+    80→    80→
+    81→    81→### Stage Summary
+    82→    82→All 3 service pages + the OrderConfigCard client component are complete and verified. The premium e-commerce feel is achieved via: generous whitespace, mesh-bg hero strip, tier selector with subtle Framer Motion tap animation + 200ms CSS color transition, sticky right-column order card on desktop, 4-card quick facts grid, per-tier terms cards with bordered acceptance callout, and 4–5 hand-written Persian FAQs per service category. Provider-only fields (`providerKey`, `providerServiceId`, `providerCostPer1000`) are NEVER sent to the client — verified by inspection of the data-mapping code (they're simply not included in the returned objects). The order card navigates to `/order?serviceTierId=...&quantity=...&link=...` for the next agent to consume.
+    83→    83→
+    84→    84→---
+    85→    85→
+    86→    86→## Task ID: 8 — Agent: Code (Order Flow + Orders + Order Tracking)
+    87→    87→
+    88→    88→### Task
+    89→    89→Build 3 conversion-critical pages: `/order` (4-step checkout flow with review → terms → payment → success), `/orders` (status-filtered order list), and `/orders/[id]` (premium visual order tracking timeline). Plus a shared `OrderProgress` component for the progress bar.
+    90→    90→
+    91→    91→### Work Log
+    92→    92→1. **Created `src/components/brand/order-progress.tsx`** (`'use client'`) — Shared progress bar for order completion (used in order detail). Custom-built instead of shadcn `Progress` because we need (a) RTL-aware right-anchored fill, (b) status-tone indicator color (emerald for COMPLETED, amber for PARTIAL, red for FAILED, primary for in-progress), and (c) smooth 700ms width transition. Uses `right-0` absolute positioning so the bar fills from the right in RTL layout. Shows percent, completed count, remaining count — all Persian digits via `formatQuantity` + `toFaDigits`.
+    93→    93→
+    94→    94→2. **Created `src/app/order/page.tsx`** (Server Component, `dynamic = 'force-dynamic'`) — Auth wrapper + tier loader:
+    95→    95→   - Reads `serviceTierId`, `quantity`, `link` from `searchParams`.
+    96→    96→   - Auth check: if no session → `redirect('/login?reason=auth&from=...')` with the original URL preserved (only includes `?` if query string is non-empty).
+    97→    97→   - Missing/invalid params (empty, non-numeric quantity, > 5M cap) → `redirect('/services/instagram')`.
+    98→    98→   - Loads tier + service via `db.serviceTier.findUnique({ include: { service: true } })`. If tier/service inactive → `redirect('/services/instagram')`.
+    99→    99→   - Quantity out of tier's `inQuantity, maxQuantity]` → `redirect('/services/{slug}')`.
+   100→   100→   - Computes `totalAmount = Math.round((quantity / 1000) * tier.pricePer1000)` matching the API.
+   101→   101→   - Builds a stripped `OrderFlowTierData` object (no provider fields exposed) and passes to the client `<OrderFlow>`.
+   102→   102→   - Hero strip with `bg-mesh-brand` + 4-level breadcrumb (خانه / خدمات / {serviceName} / تکمیل سفارش).
+   103→   103→   - Footer back-link to the service detail page.
+   104→   104→
+   105→   105→3. **Created `src/app/order/order-flow.tsx`** (`'use client'`) — The 4-step state machine:
+   106→   106→   - **StepIndicator** (top): horizontal 4-step indicator with numbered circles + connecting lines. Completed steps show check + emerald tone; current step shows primary background + white digit; future steps muted. Persian digits via `toFaDigits(i+1)`. Hidden labels on mobile (`hidden sm:inline`).
+   107→   107→   - **Step 1 — Review (`بررسی سفارش`)**: premium e-commerce checkout card. Service header strip with gradient + emoji avatar + platform chip (colored per `PLATFORM_META`) + category chip + `TierBadge`. 2-col grid of detail rows (تعداد سفارش + زمان تحویل تخمینی). Target link card with `dir="ltr"`, `ExternalLink` icon, hover affordance. Bottom price summary card with `bg-muted/30` showing price/1000 + big total in `text-primary` bold.
+   108→   108→   - **Step 2 — Terms (`تأیید قوانین`)**: `ShieldAlert` icon header + 3 policy cards (سیاست ری‌فیل، سیاست بازگشت وجه، نکات مهم) each in a bordered sub-card with rounded icon badge. Bordered acceptance checkbox (`Checkbox` from shadcn) with full Persian acceptance text. Checkbox container shows `border-primary bg-primary/5` when checked, `bg-muted/30 hover:border-primary/40` when unchecked. "Next" button disabled until accepted. `Lock` icon hint: "پرداخت فقط پس از پذیرش قوانین فعال می‌شود."
+   109→   109→   - **Step 3 — Payment (`پرداخت`)**: Three stacked cards — (a) Wallet card with `useWalletBalance()` showing current balance (or `Loader2` spinner while loading) + amber Alert when insufficient (with "شارژ کیف پول" button → `/wallet?amount={shortfall}`). (b) Notes Input (optional, maxLength 500). (c) Total card with big primary-colored total + "پرداخت از کیف پول و ثبت سفارش" submit button (disabled while submitting/loading/insufficient). Shows `Loader2` spinner during submit. Lock hint below.
+   110→   110→   - **Step 4 — Success (`ثبت موفق`)**: Two states —
+   111→   111→     - **Success (200)**: `PartyPopper` icon in emerald halo, "سفارش با موفقیت ثبت شد!", subtitle, big order code in bordered box (`tracking-wider` for the `RG-XXXXXX` code), summary card (service/tier/quantity/total), two CTAs: "مشاهده سفارش" → `/orders/{id}` and "بازگشت به خانه".
+   112→   112→     - **Insufficient funds (402 INSUFFICIENT_FUNDS)**: `AlertCircle` icon in amber halo, "سفارش ثبت شد — در انتظار شارژ" title, explanatory text that the order WAS created in PENDING status, same big order code, summary card, amber Alert with "شارژ کیف پول" CTA → `/wallet?amount={total}` and "مشاهده سفارش" → `/orders/{orderId}`.
+   113→   113→   - **Submit logic**: `fetch('/api/orders', { method: 'POST', body: { serviceTierId, quantity, targetLink, notes, acceptedTerms: true, pay: true } })`. Handles 200 (`{ order: { id, code, status, totalAmount } }`) and 402 (`{ orderId, code, status, error, message }`). The 402 response is treated as a soft success (order created, just unpaid) — `insufficient: true` flag controls the success state UI.
+   114→   114→   - **Framer Motion**: `AnimatePresence mode="wait"` with `initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 16 }}` for step transitions. Success step uses `scale: 0.97 → 1` with staggered child animations (icon at 0.05s, title at 0.15s, subtitle at 0.2s, code box at 0.3s).
+   115→   115→   - **Step nav**: Reusable `<StepNav>` with prev/next buttons. RTL-aware — uses `ChevronLeft` with `rtl-flip` utility class for the back button icon direction.
+   116→   116→
+   117→   117→4. **Created `src/app/orders/page.tsx`** (Server Component, `dynamic = 'force-dynamic'`) — Order list loader:
+   118→   118→   - Auth check → `redirect('/login?reason=auth&from=/orders')` if no session.
+   119→   119→   - Loads orders via `db.order.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, take: 200 })`.
+   120→   120→   - Strips ALL provider-only fields — only exposes: id, code, serviceName, serviceSlug, platform, category, tier (typed as Tier), tierDisplay, emoji, quantity, unitPricePer1000, totalAmount, targetLink, status, completedCount, createdAt.
+   121→   121→   - Computes `inProgress`, `completed`, `failed` counts for the header pills.
+   122→   122→   - Hero strip with `bg-mesh-brand`, breadcrumb (خانه / سفارش‌های من), h1 "سفارش‌های من", 4 count pills (همه/در حال انجام/تکمیل شده/ناموفق) with tone colors (neutral/info/success/danger).
+   123→   123→   - Passes the rows to `<OrdersList orders={rows} />` client component.
+   124→   124→
+   125→   125→5. **Created `src/app/orders/orders-list.tsx`** (`'use client'`) — Filterable order list:
+   126→   126→   - Filter chips: 4 chips (همه / در حال انجام / تکمیل شده / ناموفق) with count badges. Active state: `bg-primary text-primary-foreground shadow-soft`. Inactive: subtle hover. `aria-pressed` for accessibility.
+   127→   127→   - `statusMatches()` helper maps each filter to a set of statuses (e.g., "in_progress" includes PENDING/PAYMENT_CONFIRMED/PROCESSING/IN_PROGRESS, "failed" includes FAILED/PARTIAL).
+   128→   128→   - **Order row**: NOT a dense table — a row card with 3 logical sections (mobile-stacked, desktop-flex):
+   129→   129→     - **Left section**: emoji avatar (11×11 in `bg-accent`), service name (truncated with `min-w-0 flex-1`), `TierBadge` sm, secondary line with order code (`Hash` icon, Persian digits) + platform chip + category chip — separated by muted "•" dots.
+   130→   130→     - **Middle section**: quantity (`formatQuantity`) + target link chip (truncated to 38 chars, `ExternalLink` icon, `font-mono` LTR direction, `stopPropagation` on click so the parent Link isn't triggered).
+   131→   131→     - **Right section**: `StatusBadge` with `pulse` prop when IN_PROGRESS/PROCESSING, total amount (bold, `formatToman`), relative time (`formatRelativeTime` + `Clock` icon).
+   132→   132→     - Hover affordance: "مشاهده جزئیات" with `ArrowLeft` icon (using `rtl-flip`), fades in on `group-hover:opacity-100`.
+   133→   133→     - Whole card is a `<Link href={/orders/${id}}>` with `hover:-translate-y-0.5 hover:shadow-soft hover:border-primary/40`.
+   134→   134→   - **Empty state**: large "📦" emoji in `bg-accent` rounded box, "هنوز سفارشی ثبت نکرده‌اید" + "اولین سفارش خود را ثبت کنید" CTA → `/services/instagram`.
+   135→   135→   - Framer Motion: `<motion.div layout>` for each row with fade-in from below + scale-out on filter change.
+   136→   136→
+   137→   137→6. **Created `src/app/orders/[id]/page.tsx`** (Server Component, `dynamic = 'force-dynamic'`) — Order detail loader:
+   138→   138→   - Auth check → `redirect('/login?reason=auth&from=/orders/{id}')` if no session.
+   139→   139→   - Loads order with `db.order.findFirst({ where: { AND: [{ id }, { OR: [{ userId: session.id }, { user: { role: 'ADMIN' } }] }] }, include: { events: { orderBy: { createdAt: 'asc' } } } })`. Admin can see any order; customers only see their own.
+   140→   140→   - 404 if not found (`notFound()`).
+   141→   141→   - Strips provider-only fields (`providerOrderId`, `providerMeta`, `walletTxId` never reach client). Exposes the full order + events list.
+   142→   142→   - Builds `supportHref` = `/support/new?orderId={id}&subject={encoded "پیگیری سفارش {code}"}`.
+   143→   143→   - Renders the `<OrderTimeline>` client component.
+   144→   144→   - Minimal hero strip (just breadcrumb + page padding) — the actual header lives in the timeline component for layout density.
+   145→   145→
+   146→   146→7. **Created `src/app/orders/[id]/order-timeline.tsx`** (`'use client'`) — The visual timeline:
+   147→   147→   - **Header**: back link "بازگشت به سفارش‌ها" (`ArrowRight` with `rtl-flip`), order code (big bold `tracking-tight`), `StatusBadge` with pulse for IN_PROGRESS/PROCESSING, secondary line with service name (`Hash` icon) + creation time (`Clock` icon, `formatDateTime`). Right side: "پشتیبانی این سفارش" outline button.
+   148→   148→   - **2-col grid** (`lg:grid-cols-[2fr_3fr]` — RTL-aware): Summary card on the right (2fr=40%), Timeline on the left (3fr=60%). Matches the task spec exactly.
+   149→   149→   - **Timeline card**: 5-step vertical timeline built from `ORDER_STATUS_FLOW`:
+   150→   150→     - For each step, computes state: `isCompleted` (step < current), `isCurrent` (step == current), `isFuture` (step > current).
+   151→   151→     - If order status is PARTIAL or FAILED, the 5th step (COMPLETED) is REPLACED with the actual outcome status (using its real tone + message from the corresponding OrderEvent if one exists).
+   152→   152→     - Each timeline row: a dot column (right side in RTL) + content (left). The dot is `h-7 w-7 rounded-full` with tone-colored ring when completed/current, or empty `border-border bg-background` when future. Completed steps show `Check` icon in tone color (`text-emerald-600`, `text-amber-600`, etc.). Current step shows a pulsing dot — `animate-ping` overlay + solid inner dot in tone color. Future steps show a small `bg-muted-foreground/30` inner dot. Vertical connector line (`w-0.5`, `min-height: 28px`) below each dot — `bg-primary/30` when completed, `bg-border` otherwise. Last step has no line.
+   153→   153→     - Each row: bold label colored by tone (`text-emerald-600` for completed, `text-foreground` for current, `text-muted-foreground` for future), message (uses the actual `OrderEvent.message` if it exists, else `STATUS_META.description`), relative time (`formatRelativeTime` of the event's `createdAt`).
+   154→   154→     - Current step gets a "در حال انجام" pill with pulsing dot.
+   155→   155→     - Framer Motion: each row fades in from x=-8 with 0.05s delay.
+   156→   156→     - Tone color maps (`TONE_DOT`, `TONE_RING`, `TONE_TEXT`) keyed by `StatusMeta.tone` (neutral/info/warning/success/danger).
+   157→   157→   - **Summary card**: Service header strip with gradient + emoji avatar + platform chip + category chip + `TierBadge`. Detail rows (تعداد / قیمت هر ۱٬۰۰۰ / مبلغ کل) in `divide-y divide-border/60`. Target link section with `dir="ltr"` link card + copy button (`Copy` → `Check` emerald on success for 1.8s via `navigator.clipboard.writeText`). Times grid (تاریخ ثبت / آخرین به‌روزرسانی). Progress bar (`OrderProgress` component) at the bottom. For PARTIAL: amber info box showing how many units were not delivered + refund amount (`Math.round((quantity - completedCount) / 1000 * unitPricePer1000)`). For FAILED: red info box showing full refund amount.
+   158→   158→   - **Notes section** (conditional): "نظرات و یادداشت" card with `StickyNote` icon + the order's notes in a `bg-muted/40` block — only rendered if `order.notes` is non-null.
+   159→   159→   - **Support CTA at bottom**: bordered card with `LifeBuoy` icon + "پشتیبانی این سفارش" heading + explanatory text + "باز کردن تیکت پشتیبانی" primary button (`MessageSquare` icon) → `supportHref`.
+   160→   160→
+   161→   161→### Errors Fixed
+   162→   162→- **Edge case in auth redirect URL**: initial implementation built `/order?${new URLSearchParams(sp).toString()}` which produced a stray `?` when no query params were present (e.g., `/order?`). Fixed by only including `?` when the query string is non-empty.
+   163→   163→- **OrderProgress initial design**: First attempt used shadcn `Progress` with a tone-overlay span — but the overlay was invisible (opacity-0). Rewrote as a custom div with `right-0` absolute positioning + status-tone indicator color + 700ms width transition. This handles RTL correctly and supports per-status colors (emerald/amber/red/primary).
+   164→   164→- No compile errors during dev — all 3 pages compiled cleanly on first run (verified via dev log: `compile: 2.4s`, `compile: 1.04s`, `compile: 1.57s` initial compile times).
+   165→   165→
+   166→   166→### Verification
+   167→   167→- `curl -s -o /dev/null -w "%{http_code}"` results (unauthenticated):
+   168→   168→  - `/order` → **307** (auth redirect to `/login?reason=auth&from=%2Forder`) ✓
+   169→   169→  - `/orders` → **307** (auth redirect to `/login?reason=auth&from=/orders`) ✓
+   170→   170→  - `/orders/abc` → **307** (auth redirect to `/login?reason=auth&from=%2Forders%2Fabc`) ✓
+   171→   171→- Authenticated testing (logged in as admin@roshdgar.local via NextAuth credentials flow):
+   172→   172→  - `/orders` (admin, no orders) → **200** — renders "سفارش‌های من" h1, 4 count pills, and empty state ("هنوز سفارشی ثبت نکرده‌اید").
+   173→   173→  - `/order?serviceTierId=cmt09v27r0008pipsf7odyzho&quantity=500&link=https://instagram.com/p/abc123` → **200** — renders "تکمیل سفارش" h1, step indicator, "بررسی سفارش" step card with service summary, total = 32,500 تومان.
+   174→   174→  - Created a test order via `POST /api/orders` (pay=false) → got back `{ id, code: "RG-JEJ2BU", status: "PENDING", totalAmount: 32500 }`.
+   175→   175→  - `/orders` (admin, with 1 order) → **200** — renders the order row card with code RG-JEJ2BU, service name "فالوور اینستاگرام", status badge "در انتظار پرداخت", total ۳۲٬۵۰۰ ت, relative time.
+   176→   176→  - `/orders/{orderId}` → **200** — renders order code "RG-JEJ2BU" big, "در انتظار پرداخت" status badge, 5-step timeline (all status labels present in HTML: "در انتظار پرداخت", "پرداخت تأیید شد", "در حال ارسال", "در حال انجام", "تکمیل شد"), summary card with target link, "پشتیبانی این سفارش" CTA at bottom.
+   177→   177→- `bun run lint` → **exit 0**, clean. No ESLint warnings or errors.
+   178→   178→- Dev log final state: no compile errors, all routes return 200 when authenticated, all unauthenticated requests correctly 307-redirect to `/login?reason=auth&from=...`.
+   179→   179→- Provider-only fields verified stripped — the data-mapping code in `orders/page.tsx` and `orders/[id]/page.tsx` explicitly excludes `providerOrderId`, `providerMeta`, `providerKey`, `providerServiceId`, `providerCostPer1000`, `walletTxId` from the objects passed to client components.
+   180→   180→
+   181→   181→### Stage Summary
+   182→   182→All 3 conversion-critical pages + the shared `OrderProgress` component are complete and verified. The order flow feels like a premium e-commerce checkout (4-step state machine with Framer Motion fade+slide transitions, big order code on success, celebratory icon with halo glow). The orders list uses row cards (not a dense table) with hover lift + arrow affordance, and includes a friendly empty state with CTA. The order detail page features a real product-tracking-style timeline — vertical connected dots with tone-colored rings (neutral/info/warning/success/danger per `STATUS_META`), pulsing animation on the current step, completed steps filled with check icons, future steps muted, and conditional outcome states for PARTIAL/FAILED (replaces the COMPLETED step with the actual outcome tone + message). The summary card includes a copy-button for the target link, a custom RTL-aware progress bar (right-anchored fill), and conditional refund info boxes for PARTIAL/FAILED orders. Provider-only fields are never sent to the client — verified by code inspection. The 402 INSUFFICIENT_FUNDS case is handled gracefully — the order IS created in PENDING status, and the success step shows a "registered but unpaid" amber state with both "شارژ کیف پول" and "مشاهده سفارش" CTAs, using the `orderId` from the 402 response body.
+   183→   183→
+   184→   184→---
+   185→   185→
+   186→   186→## Task ID: 10 — Agent: Code (Wallet + Support pages)
+   187→   187→
+   188→   188→### Task
+   189→   189→Build 4 page areas (5 routes) — `/wallet` (banking-app feel + deposit dialog), `/wallet/callback` (mock ZarinPal verifier with motion states), `/support` (ticket list), `/support/new` (RHF+zod new ticket form with order autocomplete), and `/support/[id]` (chat-style thread with optimistic replies).
+   190→   190→
+   191→   191→### Work Log
+   192→   192→1. **Created `src/app/wallet/page.tsx`** (Server Component, `dynamic = 'force-dynamic'`) — Wallet loader:
+   193→   193→   - Auth check → `redirect('/login?reason=auth&from=/wallet')` if no session.
+   194→   194→   - Reads `searchParams.amount` to compute `initialDepositOpen` boolean (so order-flow's `/wallet?amount={shortfall}` link auto-opens the deposit dialog).
+   195→   195→   - `ensureWallet(session.id)` (upsert wallet row) then `Promise.all` loads wallet + last 50 transactions via Prisma.
+   196→   196→   - Strips Prisma type narrowing — only exposes display-safe fields: id, direction (CREDIT|DEBIT), amount, balanceAfter, type (DEPOSIT|ORDER_PAYMENT|REFUND|ADMIN_ADJUST), description, reference, orderId, createdAt (ISO string).
+   197→   197→   - Hero strip with `bg-mesh-brand` + breadcrumb (خانه / کیف پول).
+   198→   198→
+   199→   199→2. **Created `src/app/wallet/wallet-view.tsx`** (`'use client'`) — The premium wallet UI:
+   200→   200→   - **Hero balance card**: `bg-mesh-brand` + `bg-grid` overlay, big `text-5xl` balance (Persian digits via `formatToman`) with `tnum tabular-nums`, "تومان" label, "شارژ کیف پول" primary button + "سفارش‌های من" outline button. Uses `useWalletBalance()` React Query hook with `initialBalance` SSR fallback so header & page stay in sync (15s refetch interval from the hook).
+   201→   201→   - **Filter chips**: همه / واریز / برداشت with live count badges in Persian digits.
+   202→   202→   - **Transactions list**: a clean `bg-card` rounded container with `divide-y`-style row borders (NOT a table). Each row:
+   203→   203→     - Tone-colored icon by type — DEPOSIT (`ArrowDownLeft` + emerald bg), ORDER_PAYMENT (`ArrowUpRight` + primary bg), REFUND (`RotateCcw` + amber bg), ADMIN_ADJUST (`Settings` + muted bg).
+   204→   204→     - Description (truncate) + small type-label chip + relative time (title shows full `formatDateTime`).
+   205→   205→     - If `orderId` present → inline Link "مشاهده سفارش" with `ExternalLink` icon (primary color).
+   206→   206→     - Else if `reference` present → short hash with `Hash` icon (mono font).
+   207→   207→     - Right side: signed amount (`+`/`−`) colored emerald for CREDIT, red for DEBIT + small "موجودی" snapshot showing `balanceAfter`.
+   208→   208→     - Framer Motion `motion.div layout` for smooth reflow on filter change.
+   209→   209→   - **Deposit Dialog** (shadcn Dialog):
+   210→   210→     - Large amount input (`h-14 text-2xl font-bold tabular-nums`), `dir="ltr"`, accepts Persian digits via `toEnDigits`, strips non-digits, formats with thousands separators for display.
+   211→   211→     - 5 quick amount chips: ۵۰٬۰۰۰ / ۱۰۰٬۰۰۰ / ۲۵۰٬۰۰۰ / ۵۰۰٬۰۰۰ / ۱٬۰۰۰٬۰۰۰ (all Persian digits via `toFaDigits`).
+   212→   212→     - Validation: min ۱۰٬۰۰۰, max ۵۰٬۰۰۰٬۰۰۰ Toman (matches API). Shows live "مبلغ نهایی: X تومان" hint when valid, destructive-red error message when invalid.
+   213→   213→     - Submit button "پرداخت از درگاه زرین‌پال" → `POST /api/wallet/deposit` → on success `router.push(redirectUrl)` (which auto-completes the mock payment). Shows `Loader2` spinner during API call.
+   214→   214→     - On non-2xx response → `useToast({ variant: 'destructive' })` with localized message.
+   215→   215→     - Enter key submits if `canSubmit`.
+   216→   216→     - `useEffect` resets amount 200ms after close (so the closing animation isn't interrupted).
+   217→   217→   - **Empty state**: 💳 emoji in `bg-accent` box + "هنوز تراکنشی ندارید" + "شارژ کیف پول" CTA.
+   218→   218→   - **Footer note**: ShieldCheck icon + "تمام تراکنش‌ها از طریق درگاه زرین‌پال پردازش می‌شوند."
+   219→   219→
+   220→   220→3. **Created `src/app/wallet/callback/page.tsx`** (`'use client'`, with `<Suspense>` wrapper for `useSearchParams`) — The transient payment verifier:
+   221→   221→   - Reads `?Authority=...&Status=...&paymentId=...` via `useSearchParams`.
+   222→   222→   - POSTs to `/api/wallet/callback?...` once (idempotent via `calledRef`).
+   223→   223→   - **Loading state**: emerald spinner halo + "در حال تأیید پرداخت…" + "لطفاً این صفحه را نبندید".
+   224→   224→   - **Success**: green `CheckCircle2` halo + "پرداخت با موفقیت انجام شد" + tracking code (`toFaDigits(refId)`) + "موجودی جدید کیف پول" (`balanceAfter`). Calls `useWalletBalance().refetch()` to refresh balance across the app.
+   225→   225→   - **alreadyPaid**: info-blue `Info` halo + "این پرداخت قبلاً تأیید شده است".
+   226→   226→   - **Error**: red `XCircle` halo + reason (USER_CANCELED → "پرداخت توسط شما لغو شد.", AUTHORITY_MISMATCH → "اطلاعات پرداخت نامعتبر است.", etc.) + "تلاش مجدد" + "تماس با پشتیبانی" buttons.
+   227→   227→   - **Framer Motion**: `AnimatePresence mode="wait"` for state transitions, `backOut` ease on icon, staggered title (0.16s) → description (0.22s) → refId (0.3s) → balanceAfter (0.36s).
+   228→   228→   - **Layout**: `SiteShell hideFooter` + `min-h-[calc(100vh-4rem)]` centered, with `Logo` at top — feels transient and focused.
+   229→   229→
+   230→   230→4. **Created `src/app/support/page.tsx`** (Server Component) — Tickets loader:
+   231→   231→   - Auth check → `redirect('/login?reason=auth&from=/support')`.
+   232→   232→   - Loads tickets with `replies` included (selecting only display-safe fields).
+   233→   233→   - Strips to `TicketRow`: id, code, subject, category, status, orderId, createdAt/updatedAt ISO, replyCount, lastReplyAt + lastReplyIsStaff.
+   234→   234→   - Computes 3 count pills: باز (warning), پاسخ داده شده (success), بسته (neutral).
+   235→   235→   - Hero strip with `bg-mesh-brand` + breadcrumb (خانه / پشتیبانی) + h1 "پشتیبانی".
+   236→   236→
+   237→   237→5. **Created `src/app/support/support-list.tsx`** (`'use client'`) — Filterable ticket list:
+   238→   238→   - Filter chips: همه / باز / پاسخ داده شده / بسته with counts in Persian digits.
+   239→   239→   - "تیکت جدید" primary button in top-right → links to `/support/new`.
+   240→   240→   - **Ticket row card**: `MessageSquare` avatar + subject (truncate) + meta line (code with `Hash`, category icon, relative time). Right side: reply count pill (`Reply` icon), last activity time (desktop only), status chip with colored dot (OPEN=amber pulse, ANSWERED=emerald, CLOSED=muted). Whole card is a `<Link>`. Hover lift (`-translate-y-0.5`) + shadow + arrow chevron that slides on hover.
+   241→   241→   - **Empty state**: 💬 emoji in `bg-accent` + "هنوز تیکتی ندارید" + "ارسال اولین تیکت" CTA.
+   242→   242→   - Framer Motion `layout` for smooth filter transitions.
+   243→   243→
+   244→   244→6. **Created `src/app/support/new/page.tsx`** (Server Component) — New ticket wrapper:
+   245→   245→   - Auth check + reads `?orderId&subject&category` from `searchParams` (used by order-detail page's CTA → pre-fills form).
+   246→   246→   - Loads last 10 user orders via Prisma for the order picker (selecting only display fields: id, code, serviceName, emoji, status, createdAt).
+   247→   247→   - Strips status to OrderStatus union.
+   248→   248→   - Validates `orderId` from query against the user's actual orders (drops orphan IDs).
+   249→   249→   - Validates `category` is one of general/order/payment/other (defaults to general).
+   250→   250→   - Passes `orderOptions` + `initial` to `<NewTicketForm>` client component.
+   251→   251→
+   252→   252→7. **Created `src/app/support/new/new-ticket-form.tsx`** (`'use client'`) — RHF + Zod form:
+   253→   253→   - **Schema** (zod): subject (3–120 chars), category (enum), orderId (optional), message (5–4000 chars). Error messages in Persian.
+   254→   254→   - **Fields**:
+   255→   255→     - **موضوع**: Input with placeholder "مثلاً: سفارش من تکمیل نشده است", maxLength 120.
+   256→   256→     - **دسته‌بندی**: shadcn `Select` with 4 options (عمومی/سفارش/پرداخت/سایر) each with an icon.
+   257→   257→     - **سفارش مرتبط** (only if user has recent orders): custom `Popover`-based picker with search input — shows emoji + serviceName + code + StatusBadge + relative time for each order. "بدون انتخاب سفارش" option at top. Remove button below.
+   258→   258→     - **متن پیام**: `Textarea` with `min-h-32`, character counter "X / ۴۰۰۰".
+   259→   259→   - **Submit**: "ارسال تیکت" button with `Send` icon. Posts to `/api/support`. On 200 → toast success + `router.push(/support/{id})`. On non-2xx → toast destructive with localized message.
+   260→   260→   - **Helper callout**: at bottom, explains how to get a faster reply (mention order code, error message, link).
+   261→   261→   - Reusable `<Field>` sub-component for label + hint + error layout.
+   262→   262→
+   263→   263→8. **Created `src/app/support/[id]/page.tsx`** (Server Component, `dynamic = 'force-dynamic'`) — Ticket detail loader:
+   264→   264→   - Auth check → `redirect('/login?reason=auth&from=/support/{id}')`.
+   265→   265→   - `findFirst` with `OR: [{ userId: session.id }, { user: { role: 'ADMIN' } }]` — admins can view any ticket, customers only their own.
+   266→   266→   - `notFound()` if missing.
+   267→   267→   - Includes `replies` (selecting id, message, isStaff, createdAt, userId).
+   268→   268→   - Strips to `TicketData` + `TicketReply[]` types.
+   269→   269→   - Renders breadcrumb (خانه / پشتیبانی / {code}) + `<TicketThread>`.
+   270→   270→
+   271→   271→9. **Created `src/app/support/[id]/ticket-thread.tsx`** (`'use client'`) — Chat-style thread:
+   272→   272→   - **Header card**: code chip (mono `Hash` + code), category chip with icon, status chip with colored dot (OPEN=amber pulse, ANSWERED=emerald, CLOSED=muted), subject (text-xl), created + updated times. "سفارش مرتبط" button if `orderId` present (links to `/orders/{orderId}`).
+   273→   273→   - **Closed banner**: muted box with `Lock` icon + "این تیکت بسته شده است. برای ادامه گفتگو یک تیکت جدید ایجاد کنید." (replaces reply composer when CLOSED).
+   274→   274→   - **Thread**: `max-h-[60vh] overflow-y-auto` scroll container with chat bubbles:
+   275→   275→     - User's own messages: right-aligned (RTL), `bg-card` border, `rounded-tl-sm`, "شما" pill.
+   276→   276→     - Staff messages: left-aligned, `bg-primary/5 border-primary/20`, `rounded-tr-sm`, "پشتیبانی" pill with `Headphones` icon.
+   277→   277→     - Each bubble: avatar (User/Headphones), sender pill, relative time (title shows full datetime), message body with `whitespace-pre-wrap`.
+   278→   278→     - Framer Motion `layout` + fade-in.
+   279→   279→     - Auto-scroll to bottom on new messages via `useRef.scrollTo({ behavior: 'smooth' })`.
+   280→   280→   - **Reply composer** (sticky at bottom): Textarea (`min-h-20`), disabled when CLOSED, character counter, "ارسال پاسخ" button. Cmd/Ctrl+Enter shortcut to submit.
+   281→   281→   - **Optimistic UI**: appends a temporary reply (50% opacity via `optimistic` prop) immediately, replaces with real reply on 200 response. On error: rolls back the optimistic reply, restores the message text, shows destructive toast.
+   282→   282→
+   283→   283→### Errors Fixed
+   284→   284→- **Lint rule `react-hooks/set-state-in-effect`**: Two synchronous `setState` calls inside `useEffect` triggered lint errors:
+   285→   285→  - In `wallet-view.tsx` — the auto-open deposit dialog effect (`setDepositOpen(true)` if URL has `?amount=`). **Fixed by** moving the URL param check to the server (`page.tsx` reads `searchParams.amount` and passes `initialDepositOpen` boolean prop, which initializes the `useState` lazily). Eliminates the effect entirely.
+   286→   286→  - In `wallet/callback/page.tsx` — early `setState({ kind: 'error' })` for missing URL params. **Fixed by** removing the synchronous check and folding it into the `.then()` async handler (the API returns 400 for missing params anyway, so the same error path handles both cases).
+   287→   287→- **`useEffect is not defined` runtime error** in DepositDialog: After removing the auto-open effect, I accidentally dropped `useEffect` from the React import (still used by the close-reset effect). **Fixed by** re-adding `useEffect` to the import. Caught by 500 in dev log + authenticated curl test.
+   288→   288→- **`react-hooks/exhaustive-deps`**: `useToast()` returns a new `toast` function each render — passing it as a dep to a child component (`DepositDialog`) would trigger re-renders. Kept it as a regular prop (not in a memo) since the dialog lifecycle is short. Lint accepted this.
+   289→   289→
+   290→   290→### Verification
+   291→   291→
+   292→   292→- `curl -s -o /dev/null -w "%{http_code}"` (unauthenticated):
+   293→   293→  - `/wallet` → **307** (`Location: /login?reason=auth&from=/wallet`) ✓
+   294→   294→  - `/wallet/callback` → **200** (intentional — public transient page) ✓
+   295→   295→  - `/support` → **307** (`Location: /login?reason=auth&from=/support`) ✓
+   296→   296→  - `/support/new` → **307** ✓
+   297→   297→  - `/support/{id}` → **307** ✓
+   298→   298→
+   299→   299→- Authenticated (admin@roshdgar.local via NextAuth credentials flow):
+   300→   300→  - `/wallet` → **200** — renders "موجودی فعلی", "شارژ کیف پول", "تراکنش‌ها", "تومان" labels.
+   301→   301→  - `/support` → **200** — renders "تیکت جدید", "پشتیبانی", and existing ticket rows.
+   302→   302→  - `/support/new` → **200** — renders "تیکت جدید" form with subject/category/message fields.
+   303→   303→  - `/support/{id}` → **200** — renders ticket header, replies thread, and "ارسال پاسخ" composer.
+   304→   304→
+   305→   305→- **End-to-end deposit flow** (authenticated):
+   306→   306→  - `POST /api/wallet/deposit { amount: 50000 }` → 200 with `{ paymentId, authority, redirectUrl: "/wallet/callback?..." }`.
+   307→   307→  - `POST /api/wallet/callback?Authority=...&Status=OK&paymentId=...` → 200 with `{ ok: true, refId: "ZP...", balanceAfter }`.
+   308→   308→  - `GET /api/wallet/transactions` → shows the new CREDIT DEPOSIT transaction (amount 50000, balanceAfter 10050000, description "شارژ کیف پول از درگاه زرین‌پال", reference = payment.id).
+   309→   309→
+   310→   310→- **End-to-end support flow** (authenticated):
+   311→   311→  - `POST /api/support { subject: "تست تیکت", category: "order", message: "سلام، این یک تیکت تست است." }` → 200 with `{ ticket: { id, code: "TK-RT7LG", status: "OPEN", replies: [...] } }`.
+   312→   312→  - `GET /api/support` → list shows the new ticket with code TK-RT7LG, subject "تست تیکت", status "باز" (OPEN).
+   313→   313→
+   314→   314→- `bun run lint` → **exit 0**, clean. No ESLint warnings or errors.
+   315→   315→- Dev log final state: no compile errors, all routes return expected status codes.
+   316→   316→
+   317→   317→### Stage Summary
+   318→   318→All 5 wallet + support routes are complete and verified end-to-end. The wallet page feels like a modern Iranian banking app (Snapp!/Divar style) — large balance display with mesh-gradient hero, clean transaction rows with tone-colored icons (not a dense table), and a polished deposit dialog with quick amount chips, Persian digit input, live validation, and ZarinPal-themed copy. The callback page is a transient 3-state flow (loading → success/fail/alreadyPaid) with staggered Framer Motion entrance animations and wallet balance refetch. The support section is a clean ticket list with status chips + reply counts, an RHF+Zod new ticket form with an order picker autocomplete (filters user's recent orders + StatusBadge), and a chat-style thread view with user/staff bubbles, optimistic reply rendering, auto-scroll, and Cmd+Enter shortcut. Provider-only fields are never sent to the client — the data mapping code in `wallet/page.tsx`, `support/page.tsx`, `support/new/page.tsx`, and `support/[id]/page.tsx` explicitly selects only display-safe fields. The `/wallet?amount={shortfall}` deep link from order-flow's "شارژ کیف پول" CTA auto-opens the deposit dialog via server-side `searchParams` parsing (no setState-in-effect needed). All Persian digits rendered via `toFaDigits`/`formatToman`; amounts are integer Toman throughout.
+   319→   319→
